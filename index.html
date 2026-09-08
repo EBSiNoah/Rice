@@ -1,1 +1,214 @@
-<head></head>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>전국 공영도매시장 일별 경매 가격 추이</title>
+  <!-- Tailwind CSS (스타일링) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js (그래프 시각화) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+  <div class="max-w-6xl mx-auto px-4 py-8">
+    <!-- 헤더 -->
+    <header class="mb-8">
+      <h1 class="text-3xl font-bold text-gray-900 mb-2">📊 공영도매시장 품목별 낙찰 시세</h1>
+      <p class="text-gray-600">매일 오후 7시 자동 업데이트되는 도매시장 경매 가격 데이터입니다.</p>
+    </header>
+
+    <!-- 검색 및 날짜 선택 바 -->
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-wrap gap-4 items-center justify-between">
+      <div class="flex items-center gap-2">
+        <label for="dateSelect" class="font-medium text-gray-700">조회 일자:</label>
+        <select id="dateSelect" class="border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">데이터 로딩 중...</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-2 w-full md:w-auto">
+        <input type="text" id="searchInput" placeholder="품목명 검색 (예: 배추, 사과)" 
+               class="border border-gray-300 rounded-lg px-4 py-2 w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+    </div>
+
+    <!-- 메인 콘텐츠 영역 (차트 & 데이터 테이블) -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- 좌측/상단: 시세 추이 차트 -->
+      <div class="lg:col-span-3 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h2 id="chartTitle" class="text-xl font-bold text-gray-800 mb-4">📈 선택 품목 가격 추이 (품목을 선택하세요)</h2>
+        <div class="relative h-72">
+          <canvas id="priceChart"></canvas>
+        </div>
+      </div>
+
+      <!-- 하단: 품목별 가격 목록 테이블 -->
+      <div class="lg:col-span-3 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+          <h3 class="font-bold text-gray-800" id="tableTitle">오늘의 품목별 낙찰가 목록</h3>
+          <span class="text-xs text-gray-500">* 품목 행을 클릭하면 해당 품목의 일별 그래프가 표시됩니다.</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-gray-100 text-gray-600 border-b border-gray-200">
+                <th class="py-3 px-4">품목명</th>
+                <th class="py-3 px-4 text-right">평균 낙찰가</th>
+                <th class="py-3 px-4 text-right">최저가</th>
+                <th class="py-3 px-4 text-right">최고가</th>
+                <th class="py-3 px-4 text-right">총 거래 수량</th>
+              </tr>
+            </thead>
+            <tbody id="priceTableBody" class="divide-y divide-gray-100">
+              <tr>
+                <td colspan="5" class="text-center py-8 text-gray-400">데이터를 불러오는 중입니다...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    let rawHistoryData = {};
+    let chartInstance = null;
+    let selectedItem = null;
+
+    // 1. data/history.json 파일 읽기
+    async function initData() {
+      try {
+        const response = await fetch('./data/history.json');
+        if (!response.ok) throw new Error("데이터 파일을 찾을 수 없습니다.");
+        
+        rawHistoryData = await response.json();
+        
+        const dates = Object.keys(rawHistoryData).sort().reverse(); // 최근 날짜순 정렬
+        if (dates.length === 0) {
+          showEmptyMessage("저장된 데이터가 없습니다.");
+          return;
+        }
+
+        // 날짜 드롭다운 옵션 채우기
+        const dateSelect = document.getElementById('dateSelect');
+        dateSelect.innerHTML = '';
+        dates.forEach(date => {
+          const opt = document.createElement('option');
+          opt.value = date;
+          opt.textContent = date;
+          dateSelect.appendChild(opt);
+        });
+
+        // 이벤트 리스너 등록
+        dateSelect.addEventListener('change', () => renderTable());
+        document.getElementById('searchInput').addEventListener('input', () => renderTable());
+
+        // 초기 화면 그리기
+        renderTable();
+      } catch (err) {
+        showEmptyMessage("데이터를 불러오는데 실패했습니다: " + err.message);
+      }
+    }
+
+    // 2. 테이블 데이터 출력
+    function renderTable() {
+      const selectedDate = document.getElementById('dateSelect').value;
+      const searchKeyword = document.getElementById('searchInput').value.trim().toLowerCase();
+      const tbody = document.getElementById('priceTableBody');
+      
+      const dayData = rawHistoryData[selectedDate] || {};
+      const itemNames = Object.keys(dayData).filter(name => name.toLowerCase().includes(searchKeyword));
+
+      document.getElementById('tableTitle').textContent = `📅 ${selectedDate} 품목별 낙찰가 목록`;
+
+      if (itemNames.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-400">검색 결과가 없습니다.</td></tr>`;
+        return;
+      }
+
+      // 첫번째 품목을 기본 선택 상태로 지정 (초기 1회)
+      if (!selectedItem && itemNames.length > 0) {
+        selectedItem = itemNames[0];
+        updateChart(selectedItem);
+      }
+
+      tbody.innerHTML = '';
+      itemNames.forEach(name => {
+        const item = dayData[name];
+        const tr = document.createElement('tr');
+        tr.className = `hover:bg-blue-50 cursor-pointer transition ${selectedItem === name ? 'bg-blue-50 font-semibold' : ''}`;
+        
+        tr.innerHTML = `
+          <td class="py-3 px-4 text-gray-900">${name}</td>
+          <td class="py-3 px-4 text-right text-blue-600 font-bold">${item.avg_price ? item.avg_price.toLocaleString() + ' 원' : '-'}</td>
+          <td class="py-3 px-4 text-right text-gray-500">${item.min_price ? item.min_price.toLocaleString() + ' 원' : '-'}</td>
+          <td class="py-3 px-4 text-right text-gray-500">${item.max_price ? item.max_price.toLocaleString() + ' 원' : '-'}</td>
+          <td class="py-3 px-4 text-right text-gray-600">${item.total_qty ? item.total_qty.toLocaleString() : '-'}</td>
+        `;
+
+        // 행 클릭 시 해당 품목 차트 업데이트
+        tr.addEventListener('click', () => {
+          selectedItem = name;
+          renderTable(); // 선택 표시를 위해 재렌더링
+          updateChart(name);
+        });
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    // 3. 품목별 일별 시세 변동 그래프 그리기
+    function updateChart(itemName) {
+      document.getElementById('chartTitle').textContent = `📈 [${itemName}] 일별 평균 낙찰가 변동 추이`;
+
+      const dates = Object.keys(rawHistoryData).sort(); // 과거 -> 최근순 정렬
+      const prices = dates.map(d => rawHistoryData[d][itemName]?.avg_price || null);
+
+      const ctx = document.getElementById('priceChart').getContext('2d');
+
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: [{
+            label: `${itemName} 평균가 (원)`,
+            data: prices,
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.2,
+            spanGaps: true
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: false,
+              ticks: { callback: value => value.toLocaleString() + '원' }
+            }
+          }
+        }
+      });
+    }
+
+    function showEmptyMessage(msg) {
+      document.getElementById('priceTableBody').innerHTML = `<tr><td colspan="5" class="text-center py-8 text-red-400">${msg}</td></tr>`;
+    }
+
+    // 초기화
+    initData();
+  </script>
+</body>
+</html>
