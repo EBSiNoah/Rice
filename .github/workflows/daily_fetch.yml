@@ -2,7 +2,7 @@ name: Daily Price Data Collector
 
 on:
   schedule:
-    - cron: '0 14 * * *'  # 매일 한국시간 밤 11시(UTC 14:00) 자동 실행
+    - cron: '0 10 * * *'  # 매일 한국시간 밤 7시(UTC 10:00) 자동 실행
   workflow_dispatch:      # Actions 탭에서 수동 실행 버튼 활성화
 
 jobs:
